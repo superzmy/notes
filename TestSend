@@ -1,0 +1,115 @@
+#include <stdint.h>
+#include <unistd.h>
+
+#include <thread>
+#include <chrono>
+#include <atomic>
+
+#include <sys/socket.h>
+
+#include <netinet/in.h>
+#include <arpa/inet.h>
+
+typedef int64_t TickCount;
+TickCount MyGetTickCount()
+{
+	return std::chrono::steady_clock::now().time_since_epoch().count() / 1000000LL;
+}
+
+int startup(int _port,const char* _ip)
+{
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if(sock < 0)
+    {
+        perror("socket");
+        exit(1);
+    }
+
+    int opt=1;
+    setsockopt(sock,SOL_SOCKET,SO_REUSEADDR,&opt,sizeof(opt));
+
+    struct sockaddr_in local;
+    local.sin_family = AF_INET;
+    local.sin_port = htons( _port);
+    local.sin_addr.s_addr = inet_addr(_ip);
+    socklen_t len = sizeof(local);
+
+    if(bind(sock,(struct sockaddr*)&local , len) < 0)
+    {
+        perror("bind");
+        exit(2);
+    }
+
+    if(listen(sock, 5) < 0) //允许连接的最大数量为5
+    {
+        perror("listen");
+        exit(3);
+    }
+
+    return sock;
+}
+
+int myconnect(int port, const char* ip)
+{
+    int connectfd = socket(AF_INET, SOCK_STREAM, 0);
+    struct sockaddr_in target;
+    target.sin_family = AF_INET;
+    target.sin_port = htons(port);
+    target.sin_addr.s_addr = inet_addr(ip);
+    socklen_t len = sizeof(struct sockaddr_in);
+    connect(connectfd, (struct sockaddr*)&target, sizeof(target));
+    return connectfd;
+}
+
+int main(int argc, char** argv)
+{
+    int tcount = 0;
+    if (argc == 1)
+        tcount = 1;
+    else
+        sscanf(argv[1], "%d", &tcount);
+
+    int pipes[2];
+    //pipe2(pipes, 0);
+    //socketpair(AF_UNIX, SOCK_STREAM, 0, pipes);
+    std::atomic<int> closeCount{tcount};
+
+    int listenfd = startup(10000, "0.0.0.0");
+    int clientfd = myconnect(10000, "127.0.0.1");
+
+    int serverfd = accept(listenfd, NULL, 0);
+    pipes[0] = clientfd;
+    pipes[1] = serverfd;
+
+    for (int ti = 0; ti < tcount; ++ti)
+    {
+        std::thread([pipes, &closeCount]()
+        {
+            char buf[4096];
+            int n = 1000000;
+            TickCount t0 = MyGetTickCount();
+            while (n--)
+                write(pipes[1], buf, 1);
+            TickCount t1 = MyGetTickCount();
+            printf("sender %lld~%lld %lld\n", (long long)t0, (long long)t1, (long long)(t1 - t0));
+            
+            if (std::atomic_fetch_sub(&closeCount, 1) == 1)
+                close(pipes[1]);
+
+        }).detach();
+    }
+    {
+        char tmp[4096] = {};
+        
+        read(pipes[0], tmp, 4096) > 0;
+        TickCount t2 = MyGetTickCount();
+        while (read(pipes[0], tmp, 4096) > 0)
+        {}
+        TickCount t3 = MyGetTickCount();
+        printf("receiver %lld~%lld %lld\n", (long long)t2, (long long)t3, (long long)(t3 - t2));
+    }
+
+    close(pipes[0]);
+
+    return 0;
+}
