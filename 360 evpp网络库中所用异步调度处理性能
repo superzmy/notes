@@ -1,0 +1,7 @@
+https://blog.csdn.net/zieckey/article/details/69803011#commentsedit
+evpp性能测试（3）: 对无锁队列boost::lockfree::queue和moodycamel::ConcurrentQueue做一个性能对比测试
+
+文中所述3种队列提供了总计约 线程数（1~10）×100万次每秒 数量级的异步任务处理性能
+
+然而，本人所作多线程写单读流的支撑下，1、2个线程写入即可达到每秒2500万次的处理能力，超出这三种使用方法数倍。
+根本原因是这些多线程队列的单位是对象，根本不适合异步调用！
